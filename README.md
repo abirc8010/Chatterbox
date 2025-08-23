@@ -1,49 +1,104 @@
-# Chatterbox
+# 💬 Chatterbox
 
-Chatterbox is a real-time messaging workspace built around a clear split between persistent state, ephemeral events, and media transfer.
+Chatterbox is a full-stack, real-time messaging application built with React, Spring Boot, and PostgreSQL. It features live presence, rich Markdown rendering, and multimedia file sharing powered by Cloudinary.
 
-## Stack
+*Note: For a deep dive into the system's data models, request flows, and detailed component responsibilities, see the [Architecture Document](ARCHITECTURE.md).*
 
-- **Client:** React, TypeScript, Vite, STOMP.js, MediaRecorder API
-- **API:** Java 21, Spring Boot 3.3, Spring WebSocket/STOMP, Spring Security boundary, Spring Data JPA
-- **Data:** PostgreSQL in production, H2 for tests
-- **Media:** Cloudinary adapter boundary, ready for image and WebM voice uploads
+---
 
-## Run locally
+##  Features
 
+* **Real-Time Messaging:** Live chat, typing indicators, and presence updates via Spring STOMP WebSockets.
+* **Rich Text & Media:** Support for multiline Markdown (with GFM), emojis, file/image attachments, and in-browser WebM voice recording.
+* **Secure Authentication:** REST-based JWT authentication with 24-hour token lifecycles and BCrypt password hashing.
+* **Media Management:** Direct-to-Cloudinary authenticated multipart uploads for chat media and profile avatars (includes client-side image cropping).
+* **Smart Workspace:** Unread message tracking, user search by email, and active conversation state management.
+
+---
+
+##  Tech Stack
+
+**Frontend**
+
+* React 18 & TypeScript (via Vite)
+* STOMP.js (WebSocket client)
+* React Markdown & remark-gfm
+* lucide-react & emoji-picker-react
+
+**Backend**
+
+* Java 21 & Spring Boot 3.3
+* Spring MVC, Security, Data JPA, & WebSocket/STOMP
+* JJWT (Java JWT)
+* Cloudinary Java SDK
+
+**Infrastructure**
+
+* PostgreSQL (Primary Datastore, managed via Docker Compose locally)
+* Cloudinary (Blob/Media Storage)
+* GitHub Actions (CI/CD pipeline)
+
+---
+
+
+---
+
+##  Getting Started
+
+### Prerequisites
+
+* Node.js 20+
+* Java 21
+* Docker & Docker Compose (for local database)
+* A [Cloudinary](https://cloudinary.com/) account (for media storage)
+
+### Local Setup
+
+1. **Clone the repository:**
 ```bash
-cd /home/abir/Documents/Projects/Chatterbox
-docker compose up -d postgres
+git clone https://github.com/your-username/chatterbox.git
+cd chatterbox
+
+```
+
+
+2. **Configure Environment Variables:**
+Copy the example environment file to the project root:
+```bash
+cp .env.example .env
+
+```
+
+
+Populate `.env` with your secure credentials:
+```env
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+CHATTERBOX_JWT_SECRET=your_secure_jwt_secret_key
+
+```
+
+
+* Never commit your `.env` file or expose your Cloudinary Secret in frontend `VITE_*` variables.*
+3. **Run the Application:**
+Start the local database, backend API, and Vite development server using the provided launch script:
+```bash
 ./start.sh
+
 ```
 
-Open `http://localhost:5173/`. The launcher starts PostgreSQL, the Spring Boot API, and the Vite frontend. Contacts, messages, profile avatars, and unread counts are stored in PostgreSQL and restored after a restart.
 
-```bash
-cd backend
-mvn spring-boot:run
-```
+Once started, open the local Vite URL (typically `http://localhost:5173`) in your browser.
 
-Use the separate backend command only when you want to run the services manually.
+---
 
-Set `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, and `PORT` when connecting the API to a hosted PostgreSQL database. The defaults target a local PostgreSQL instance.
+##  Testing & CI
 
-## Routes
+Continuous Integration is handled via GitHub Actions. On every push and pull request:
 
-- `GET /api/v1/health`
-- `POST /api/v1/auth/register`
-- `POST /api/v1/auth/login`
-- `GET /api/v1/users/search?email=...`
-- `POST /api/v1/conversations`
-- `PATCH /api/v1/messages/{id}`
-- `DELETE /api/v1/messages/{id}`
-- STOMP endpoint: `/ws-chat`
-- STOMP sends: `/app/chat.send`, `/app/chat.typing`
-- STOMP subscriptions: `/user/queue/messages`, `/user/queue/events`, `/topic/typing`
-- Live subscriptions: `/topic/messages`, `/topic/typing`, `/topic/presence`
+* **Frontend:** Runs `npm ci` and verifies production build viability (`npm run build`).
+* **Backend:** Runs `mvn -B test`, executing unit tests (`AuthServiceTest`) and MockMvc integration tests backed by an isolated H2 database (`AuthApiIntegrationTest`).
 
-JWTs are issued on login/register and required for user search and future conversation routes. Set `CHATTERBOX_JWT_SECRET` to a long random value outside local development. Cloudinary remains behind a replaceable service boundary so the API can run without media credentials.
+---
 
-## Deployment shape
-
-Build the frontend on Vercel or Netlify. Build the backend Docker image for Render. Use Neon or Supabase for PostgreSQL and Cloudinary for media. Add secrets through each provider's environment settings rather than committing them.

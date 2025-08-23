@@ -30,6 +30,12 @@ public class Message {
     @jakarta.persistence.Column(nullable = false, columnDefinition = "text")
     private String content;
 
+    @Column(columnDefinition = "text")
+    private String mediaUrl;
+
+    @Column(length = 20)
+    private String messageType = "TEXT";
+
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -40,5 +46,9 @@ public class Message {
     public void setSender(User sender) { this.sender = sender; }
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
+    public String getMediaUrl() { return mediaUrl; }
+    public void setMediaUrl(String mediaUrl) { this.mediaUrl = mediaUrl; }
+    public String getMessageType() { return messageType; }
+    public void setMessageType(String messageType) { this.messageType = messageType; }
     public Instant getCreatedAt() { return createdAt; }
 }

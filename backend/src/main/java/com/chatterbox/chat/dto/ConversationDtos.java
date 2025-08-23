@@ -6,6 +6,6 @@ import java.util.UUID;
 public final class ConversationDtos {
     private ConversationDtos() {}
     public record ConversationResponse(UUID id, AuthDtos.UserResponse contact, int unreadCount) {}
-    public record MessageResponse(UUID id, String body, String senderEmail, Instant createdAt) {}
-    public record SendMessageRequest(String body) {}
+    public record MessageResponse(UUID id, String body, String senderEmail, Instant createdAt, String messageType, String mediaUrl) {}
+    public record SendMessageRequest(String body, String messageType, String mediaUrl) {}
 }

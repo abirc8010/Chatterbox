@@ -10,6 +10,10 @@ import org.springframework.web.bind.annotation.RestController;
 public class HealthController {
     @GetMapping("/health")
     public Map<String, String> health() {
-        return Map.of("service", "chatterbox-api", "status", "ok");
+        return Map.of(
+            "service", "chatterbox-api",
+            "status", "ok",
+            "mediaStorage", "cloudinary",
+                "mediaUploadAuth", "jwt-header-v8");
     }
 }

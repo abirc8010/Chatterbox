@@ -1,6 +1,14 @@
 spring:
+  config:
+    import:
+      - optional:file:./.env[.properties]
+      - optional:file:../.env[.properties]
   application:
     name: chatterbox-api
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 26MB
   threads:
     virtual:
       enabled: true
@@ -14,3 +22,7 @@ spring:
     open-in-view: false
 server:
   port: ${PORT:8080}
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}

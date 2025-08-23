@@ -14,8 +14,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Controller
 public class ChatWebSocketController {
-    public record ChatMessage(UUID conversationId, String senderEmail, String body, String messageType) {}
-    public record MessageEvent(UUID id, UUID conversationId, String senderEmail, String body, Instant createdAt) {}
+    public record ChatMessage(UUID conversationId, String senderEmail, String body, String messageType, String mediaUrl) {}
+    public record MessageEvent(UUID id, UUID conversationId, String senderEmail, String body, Instant createdAt, String messageType, String mediaUrl) {}
     public record TypingEvent(UUID conversationId, String senderEmail, boolean isTyping, Instant sentAt) {}
     public record PresenceRequest(String email, boolean online) {}
     public record PresenceEvent(String email, String displayName, String avatarUrl, boolean online, Instant sentAt) {}
@@ -41,19 +41,21 @@ public class ChatWebSocketController {
         if (!conversation.getUserOne().getId().equals(sender.getId()) && !conversation.getUserTwo().getId().equals(sender.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Conversation access denied");
         }
-        if (request.body() == null || request.body().isBlank()) return;
+        if ((request.body() == null || request.body().isBlank()) && request.mediaUrl() == null) return;
         var message = new Message();
         message.setConversation(conversation);
         message.setSender(sender);
-        message.setContent(request.body().trim());
+        message.setContent(request.body() == null ? "" : request.body().trim());
+        message.setMessageType(request.messageType() == null ? "TEXT" : request.messageType());
+        message.setMediaUrl(request.mediaUrl());
         var saved = messages.save(message);
         var recipientId = conversation.getUserOne().getId().equals(sender.getId()) ? conversation.getUserTwo().getId() : conversation.getUserOne().getId();
         conversation.incrementUnreadFor(recipientId);
         conversations.save(conversation);
         messaging.convertAndSend("/topic/conversations/" + conversation.getId() + "/messages",
-                new MessageEvent(saved.getId(), conversation.getId(), sender.getEmail(), saved.getContent(), saved.getCreatedAt()));
+                new MessageEvent(saved.getId(), conversation.getId(), sender.getEmail(), saved.getContent(), saved.getCreatedAt(), saved.getMessageType(), saved.getMediaUrl()));
         messaging.convertAndSend("/topic/messages",
-            new MessageEvent(saved.getId(), conversation.getId(), sender.getEmail(), saved.getContent(), saved.getCreatedAt()));
+            new MessageEvent(saved.getId(), conversation.getId(), sender.getEmail(), saved.getContent(), saved.getCreatedAt(), saved.getMessageType(), saved.getMediaUrl()));
     }
 
     @MessageMapping("/chat.typing")

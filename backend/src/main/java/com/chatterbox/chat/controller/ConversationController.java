@@ -65,7 +65,7 @@ public class ConversationController {
     @org.springframework.web.bind.annotation.GetMapping("/{id}/messages")
     public List<ConversationDtos.MessageResponse> messages(@org.springframework.web.bind.annotation.PathVariable UUID id, Authentication authentication) {
         requireMember(id, authentication);
-        return messages.findByConversationIdOrderByCreatedAtAsc(id).stream().map(message -> new ConversationDtos.MessageResponse(message.getId(), message.getContent(), message.getSender().getEmail(), message.getCreatedAt())).toList();
+        return messages.findByConversationIdOrderByCreatedAtAsc(id).stream().map(message -> new ConversationDtos.MessageResponse(message.getId(), message.getContent(), message.getSender().getEmail(), message.getCreatedAt(), message.getMessageType(), message.getMediaUrl())).toList();
     }
 
     @org.springframework.web.bind.annotation.PostMapping("/{id}/read")
@@ -81,13 +81,13 @@ public class ConversationController {
     public ConversationDtos.MessageResponse send(@org.springframework.web.bind.annotation.PathVariable UUID id, @RequestBody ConversationDtos.SendMessageRequest request, Authentication authentication) {
         var sender = users.findByEmailIgnoreCase(authentication.getName()).orElseThrow();
         var conversation = requireMember(id, authentication);
-        if (request.body() == null || request.body().isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Message cannot be empty");
-        var message = new Message(); message.setConversation(conversation); message.setSender(sender); message.setContent(request.body().trim());
+        if ((request.body() == null || request.body().isBlank()) && request.mediaUrl() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Message cannot be empty");
+        var message = new Message(); message.setConversation(conversation); message.setSender(sender); message.setContent(request.body() == null ? "" : request.body().trim()); message.setMessageType(request.messageType() == null ? "TEXT" : request.messageType()); message.setMediaUrl(request.mediaUrl());
         var saved = messages.save(message);
         var recipientId = conversation.getUserOne().getId().equals(sender.getId()) ? conversation.getUserTwo().getId() : conversation.getUserOne().getId();
         conversation.incrementUnreadFor(recipientId);
         conversations.save(conversation);
-        return new ConversationDtos.MessageResponse(saved.getId(), saved.getContent(), sender.getEmail(), saved.getCreatedAt());
+        return new ConversationDtos.MessageResponse(saved.getId(), saved.getContent(), sender.getEmail(), saved.getCreatedAt(), saved.getMessageType(), saved.getMediaUrl());
     }
 
     private Conversation requireMember(UUID id, Authentication authentication) {
