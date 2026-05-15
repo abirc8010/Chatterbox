@@ -68,6 +68,25 @@ type Accent = "blue" | "green" | "orange" | "red" | "black" | "violet";
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
 
+function readAuthenticatedUser(): User | null {
+  const token = localStorage.getItem("chatterbox_token");
+  if (!token) return null;
+  try {
+    const encodedPayload = token.split(".")[1];
+    if (!encodedPayload) return null;
+    const payload = JSON.parse(
+      atob(encodedPayload.replace(/-/g, "+").replace(/_/g, "/")),
+    ) as { exp?: number };
+    if (typeof payload.exp !== "number" || payload.exp * 1000 <= Date.now()) {
+      return null;
+    }
+    const user = JSON.parse(localStorage.getItem("chatterbox_user") ?? "null") as User | null;
+    return user?.email ? user : null;
+  } catch {
+    return null;
+  }
+}
+
 async function uploadMediaToCloudinary(file: File, uploadName = file.name): Promise<string> {
   if (file.size > 25 * 1024 * 1024) {
     throw new Error("Attachments must be 25 MB or smaller.");
@@ -245,9 +264,7 @@ function MessageBody({ message }: { message: Message }) {
 }
 
 function App() {
-  const [user, setUser] = useState<User | null>(() =>
-    JSON.parse(localStorage.getItem("chatterbox_user") ?? "null"),
-  );
+  const [user, setUser] = useState<User | null>(readAuthenticatedUser);
   if (!user)
     return (
       <AuthScreen
@@ -438,6 +455,9 @@ function Workspace({
   const stompRef = useRef<Client | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const chatsRef = useRef<Chat[]>(chats);
+  const conversationSubscriptionsRef = useRef(new Map<string, { unsubscribe: () => void }>());
+  const subscribeConversationsRef = useRef<() => void>(() => undefined);
   const [contactQuery, setContactQuery] = useState("");
   const [contactResults, setContactResults] = useState<Chat[]>([]);
   const [contactError, setContactError] = useState("");
@@ -446,6 +466,10 @@ function Workspace({
   useEffect(() => {
     activeIdRef.current = activeId;
   }, [activeId]);
+  useEffect(() => {
+    chatsRef.current = chats;
+    subscribeConversationsRef.current();
+  }, [chats]);
   useEffect(() => {
     if (contactQuery.trim().length < 2) {
       setContactResults([]);
@@ -504,71 +528,15 @@ function Workspace({
       .catch(() => setChats([]));
   }, [user.email]);
   useEffect(() => {
+    const token = localStorage.getItem("chatterbox_token");
+    if (!token || !readAuthenticatedUser()) return;
     const client = new Client({
       brokerURL: `${API_URL.replace(/^http/, "ws")}/ws-chat`,
+      connectHeaders: { Authorization: `Bearer ${token}` },
       reconnectDelay: 3000,
     });
     client.onConnect = () => {
-      client.subscribe("/topic/messages", (frame) => {
-        const event = JSON.parse(frame.body) as {
-          id: string;
-          conversationId: string;
-          senderEmail: string;
-          body: string;
-          createdAt: string;
-          messageType?: string;
-          mediaUrl?: string;
-        };
-        setChats((current) =>
-          current.map((chat) =>
-            chat.id === event.conversationId
-              ? {
-                  ...chat,
-                  messages: chat.messages.some(
-                    (message) => message.id === event.id,
-                  )
-                    ? chat.messages
-                    : [
-                        ...chat.messages,
-                        {
-                          id: event.id,
-                          body: event.body,
-                          messageType: event.messageType,
-                          mediaUrl: event.mediaUrl,
-                          time: new Date(event.createdAt).toLocaleTimeString(
-                            [],
-                            { hour: "numeric", minute: "2-digit" },
-                          ),
-                          mine: event.senderEmail === user.email,
-                        },
-                      ],
-                  preview: event.body,
-                  time: "Now",
-                  unread:
-                    event.senderEmail === user.email ||
-                    chat.id === activeIdRef.current
-                      ? 0
-                      : (chat.unread ?? 0) + 1,
-                }
-              : chat,
-          ),
-        );
-      });
-      client.subscribe("/topic/typing", (frame) => {
-        const event = JSON.parse(frame.body) as {
-          conversationId: string;
-          senderEmail: string;
-          isTyping: boolean;
-        };
-        if (event.senderEmail === user.email) return;
-        setChats((current) =>
-          current.map((chat) =>
-            chat.id === event.conversationId
-              ? { ...chat, typing: event.isTyping }
-              : chat,
-          ),
-        );
-      });
+      conversationSubscriptionsRef.current.clear();
       client.subscribe("/topic/presence", (frame) => {
         const event = JSON.parse(frame.body) as {
           email: string;
@@ -590,21 +558,122 @@ function Workspace({
           ),
         );
       });
+      subscribeConversationsRef.current();
       client.publish({
         destination: "/app/presence",
-        body: JSON.stringify({ email: user.email, online: true }),
+        body: JSON.stringify({ online: true }),
       });
+    };
+    client.onStompError = (frame) => {
+      const description = frame.headers.message ?? "The chat server rejected the connection.";
+      if (/auth|token|bearer/i.test(description)) {
+        onLogout();
+        return;
+      }
+      setSendError(description);
+    };
+    client.onWebSocketClose = () => {
+      conversationSubscriptionsRef.current.clear();
+      if (!readAuthenticatedUser()) onLogout();
+    };
+    client.onWebSocketError = () => {
+      setSendError("Could not connect to chat. Reconnecting…");
+    };
+    subscribeConversationsRef.current = () => {
+      if (!client.connected) return;
+      const desired = new Set(
+        chatsRef.current.flatMap((chat) => [
+          `/topic/conversations/${chat.id}/messages`,
+          `/topic/conversations/${chat.id}/typing`,
+        ]),
+      );
+      for (const [destination, subscription] of conversationSubscriptionsRef.current) {
+        if (!desired.has(destination)) {
+          subscription.unsubscribe();
+          conversationSubscriptionsRef.current.delete(destination);
+        }
+      }
+      for (const chat of chatsRef.current) {
+        const messageDestination = `/topic/conversations/${chat.id}/messages`;
+        if (!conversationSubscriptionsRef.current.has(messageDestination)) {
+          const subscription = client.subscribe(messageDestination, (frame) => {
+            const event = JSON.parse(frame.body) as {
+              id: string;
+              conversationId: string;
+              senderEmail: string;
+              body: string;
+              createdAt: string;
+              messageType?: string;
+              mediaUrl?: string;
+            };
+            setChats((current) =>
+              current.map((item) =>
+                item.id === event.conversationId
+                  ? {
+                      ...item,
+                      messages: item.messages.some((message) => message.id === event.id)
+                        ? item.messages
+                        : [
+                            ...item.messages,
+                            {
+                              id: event.id,
+                              body: event.body,
+                              messageType: event.messageType,
+                              mediaUrl: event.mediaUrl,
+                              time: new Date(event.createdAt).toLocaleTimeString([], {
+                                hour: "numeric",
+                                minute: "2-digit",
+                              }),
+                              mine: event.senderEmail === user.email,
+                            },
+                          ],
+                      preview: event.body,
+                      time: "Now",
+                      unread:
+                        event.senderEmail === user.email || item.id === activeIdRef.current
+                          ? 0
+                          : (item.unread ?? 0) + 1,
+                    }
+                  : item,
+              ),
+            );
+          });
+          conversationSubscriptionsRef.current.set(messageDestination, subscription);
+        }
+        const typingDestination = `/topic/conversations/${chat.id}/typing`;
+        if (!conversationSubscriptionsRef.current.has(typingDestination)) {
+          const subscription = client.subscribe(typingDestination, (frame) => {
+            const event = JSON.parse(frame.body) as {
+              conversationId: string;
+              senderEmail: string;
+              isTyping: boolean;
+            };
+            if (event.senderEmail === user.email) return;
+            setChats((current) =>
+              current.map((item) =>
+                item.id === event.conversationId
+                  ? { ...item, typing: event.isTyping }
+                  : item,
+              ),
+            );
+          });
+          conversationSubscriptionsRef.current.set(typingDestination, subscription);
+        }
+      }
     };
     client.activate();
     stompRef.current = client;
-    const handleBeforeUnload = () =>
+    const handleBeforeUnload = () => {
+      if (!client.connected) return;
       client.publish({
         destination: "/app/presence",
-        body: JSON.stringify({ email: user.email, online: false }),
+        body: JSON.stringify({ online: false }),
       });
+    };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
+      conversationSubscriptionsRef.current.clear();
       client.deactivate();
       stompRef.current = null;
     };
@@ -793,7 +862,6 @@ function Workspace({
       destination: "/app/chat.typing",
       body: JSON.stringify({
         conversationId: active.id,
-        senderEmail: user.email,
         isTyping: value.length > 0,
       }),
     });
@@ -804,7 +872,6 @@ function Workspace({
           destination: "/app/chat.typing",
           body: JSON.stringify({
             conversationId: active.id,
-            senderEmail: user.email,
             isTyping: false,
           }),
         }),
@@ -836,7 +903,6 @@ function Workspace({
         destination: "/app/chat.send",
         body: JSON.stringify({
           conversationId: active.id,
-          senderEmail: user.email,
           body,
           messageType: selectedAttachment?.kind?.toUpperCase() ?? "TEXT",
           mediaUrl,
@@ -846,7 +912,6 @@ function Workspace({
         destination: "/app/chat.typing",
         body: JSON.stringify({
           conversationId: active.id,
-          senderEmail: user.email,
           isTyping: false,
         }),
       });
@@ -960,7 +1025,7 @@ function Workspace({
       );
       stompRef.current?.publish({
         destination: "/app/presence",
-        body: JSON.stringify({ email: updated.email, online: true }),
+        body: JSON.stringify({ online: true }),
       });
       setProfileOpen(false);
     } catch (cause) {
